@@ -1,18 +1,5 @@
 #!/usr/bin/env bash
 #
-usage() {
-  cat << EOF
-  Usage:
-   create_certs.sh main.domain [some extra domains...]
-
-   TESTING=1 create_certs.sh some.testing
-   create_certs.sh domain.name
-   create_certs.sh domain.name another.domain.name and.another.one
-
-EOF
-  exit 0
-}
-
 # LEDIR contains following dirs and files:
 #   certs/ dir for successfully created csr, key and crt files
 #   certs-test/ dir used when testing
@@ -30,6 +17,19 @@ EOF
 # for LE to automatically verify the request (setting symlinks and permissions is up to you)
 : ${WEBROOTS:=$LEDIR/webroots}
 
+usage() {
+  cat << EOF
+  Usage:
+   create_certs.sh main.domain [some extra domains...]
+
+   TESTING=1 create_certs.sh some.testing
+   create_certs.sh domain.name
+   create_certs.sh domain.name another.domain.name and.another.one
+
+EOF
+  exit 0
+}
+
 custom_ssl_config() {
   cat /etc/ssl/openssl.cnf 
   printf "[letsencryptSAN]\n"
@@ -42,42 +42,39 @@ custom_ssl_config() {
 
 gencsr() {  # list of domains
   local base=$TMP/$1
-  openssl genrsa 4096 > $base.key 2>/dev/null
-  openssl req -new -sha256 -key $base.key -subj "/" \
+  openssl genrsa 4096 > "$base.key" 2>/dev/null
+  openssl req -new -sha256 -key "$base.key" -subj "/" \
     -reqexts letsencryptSAN \
-    -config <(custom_ssl_config "$@") > $base.csr
+    -config <(custom_ssl_config "$@") > "$base.csr"
 }
 
-sign() {
-  local base=$TMP/$1
-  python sign_csr.py --email $EMAIL \
+sign() {  # csr name
+  local csr="$1"
+  python sign_csr.py --email "$EMAIL" \
     --public-key "$ACCOUNT_PUB" \
     ${ACCOUNT_KEY:+--private-key "$ACCOUNT_KEY"} \
-    ${TESTING:+--testing} \
     ${WEBROOTS:+--webroots "$WEBROOTS"} \
-    "$base.csr" > "$base.crt"
+    ${TESTING:+--testing} \
+    "$csr" > "${csr%.csr}.crt"
 }
 
-info() {
-  local crt=$1
-  openssl x509 -in "$crt" -noout -text -certopt no_pubkey,no_sigdump,no_aux,no_version
-}
-
-# so we don't overwrite (presumably real) certs if something goes wrong with sign
-move() {
-  local base=$TMP/$1
-  mv "$base".* "$CERTSDIR/"
+info() {  # cert file
+  openssl x509 -in "$1" -noout -text -certopt no_pubkey,no_sigdump,no_aux,no_version
 }
 
 main() {
+  set -e  # exit if anything below fails
   [ -z "$1" ] && usage
   [ -f "$ACCOUNT_KEY" ] || unset ACCOUNT_KEY
   [ -d "$WEBROOTS" ] || unset WEBROOTS
   TMP=$(mktemp -d)
   trap "rm -rf '$TMP'" EXIT
+  mkdir -p "$CERTSDIR/"
 
   gencsr "$@"
-  sign $1 && move $1 && info "$CERTSDIR/$1.crt"
+  sign "$TMP/$1.csr"
+  mv -f "$TMP/$1".* "$CERTSDIR/"
+  info "$CERTSDIR/$1.crt"
 }
 
 main "$@"
